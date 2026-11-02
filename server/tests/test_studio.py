@@ -133,6 +133,29 @@ def test_framing():
     assert abs((x1 - x0) / (y1 - y0) - 0.75) < 0.01 and x0 < 380 and x1 > 640
     # nothing found: centred crop to the shape
     assert frame_box((1000, 1000), None, 3 / 4) == (125, 0, 875, 1000)
-    # cut-outs may be padded rather than cropping into the person
-    x0, y0, x1, y1 = frame_box((600, 800), (0, 0, 600, 700), 1.0, allow_pad=True)
-    assert x0 < 0 or y0 < 0 or x1 > 600 or y1 > 800
+    # a tall narrow photo with the person head to toe: the card pads the sides instead of cutting the head off
+    x0, y0, x1, y1 = frame_box((1472, 3200), (300, 120, 1180, 3150), 3 / 4)
+    assert y0 <= 120 - 10 and y1 >= 3150 and x0 < 0 and x1 > 1472
+    assert abs((x1 - x0) / (y1 - y0) - 0.75) < 0.01
+    # a person at the side of a wide photo: the box slides inside the picture rather than padding
+    x0, y0, x1, y1 = frame_box((2000, 1000), (100, 100, 500, 900), 3 / 4)
+    assert x0 == 0 and 0 <= y0 and y1 <= 1000 and x1 > 500
+    # legs already out of shot: no margin below the photo's edge, so no padding just for that
+    x0, y0, x1, y1 = frame_box((2400, 3200), (700, 1000, 1700, 3200), 1.0)
+    assert y1 == 3200 and x0 >= 0 and x1 <= 2400
+    # tight: the margins stop at the picture's edge
+    assert frame_box((600, 800), (0, 0, 600, 700), 0.0, allow_pad=False) == (0, 0, 600, 724)
+
+
+def test_padding_keeps_the_photo_look():
+    from PIL import Image
+
+    from wardrobe.finish import _crop
+
+    img = Image.new("RGB", (100, 300), (200, 30, 30))
+    out = _crop(img, (-50, 0, 150, 300), "blur")
+    assert out.size == (200, 300) and out.mode == "RGB"
+    r, g, b = out.getpixel((5, 150))
+    assert r > g and r > b  # the padding takes the photo's colour, not black or grey bars
+    clear = _crop(img.convert("RGBA"), (-50, 0, 150, 300), "clear")
+    assert clear.getpixel((5, 150))[3] == 0 and clear.getpixel((100, 150))[3] == 255
