@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Inbox, LayoutGrid, Settings, Upload, WandSparkles } from "lucide-react";
+import { Inbox, LayoutGrid, Replace, Settings, Upload, WandSparkles } from "lucide-react";
 import { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { activeWardrobe, setActiveWardrobe } from "../api";
@@ -10,6 +10,7 @@ const NAV = [
   { to: "/", label: "Closet", icon: LayoutGrid, end: true },
   { to: "/upload", label: "Add", icon: Upload },
   { to: "/inbox", label: "Review", icon: Inbox, badge: "inbox" },
+  { to: "/tryon", label: "Try on", icon: Replace },
   { to: "/studio", label: "Studio", icon: WandSparkles, badge: "studio" },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
@@ -110,7 +111,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <main key={loc.pathname.split("/")[1]} className="pb-24 lg:pb-10">
         {children}
       </main>
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         {NAV.map((n) => (
           <NavLink
             key={n.to}

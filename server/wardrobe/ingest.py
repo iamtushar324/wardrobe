@@ -204,6 +204,10 @@ def analyze_photo(payload: dict) -> None:
     for d in dets:
         try:
             crop = media.crop(p["sha256"], d["bbox"])
+            turn = media.turns(d.get("rotation")) if kind != "worn" else 0
+            if turn:  # e.g. a t-shirt photographed sideways on the bed: stand it upright
+                crop = media.rotate(crop["sha"], turn)
+            d["rotation"] = turn
             d["crop_sha"] = crop["sha"]
             if kind in ("flat_lay", "product", "detail"):
                 try:

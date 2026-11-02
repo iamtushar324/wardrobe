@@ -282,6 +282,7 @@ export type Template = {
   custom?: boolean;
   auto?: boolean;
   done?: number;
+  tryon?: boolean;
 };
 
 export type Job = {
@@ -308,6 +309,11 @@ export type Job = {
   result?: Img | null;
   position?: number;
   elapsed_s?: number;
+  options?: Record<string, any>;
+  /** try-on: the photo being edited */
+  base?: Img | null;
+  /** the AI picture is in; framing / cut-out still running */
+  finishing?: boolean;
 };
 
 export type Limits = {

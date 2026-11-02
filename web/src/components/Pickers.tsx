@@ -166,7 +166,8 @@ export function GenerateDialog({ open, onClose, itemIds, initialTemplate }: { op
     },
     onError: (e: any) => toast(e.message, "error"),
   });
-  const groups = Array.from(new Set((studio.data?.templates || []).map((x) => x.group)));
+  const templates = (studio.data?.templates || []).filter((x) => !x.tryon); // try-on has its own page
+  const groups = Array.from(new Set(templates.map((x) => x.group)));
   return (
     <Modal
       open={open}
@@ -197,7 +198,7 @@ export function GenerateDialog({ open, onClose, itemIds, initialTemplate }: { op
             <div key={g}>
               <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-muted">{g}</div>
               <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-                {studio.data!.templates
+                {templates
                   .filter((x) => x.group === g && (itemIds.length > 1 || !x.multi_item))
                   .map((x) => (
                     <TemplateCard key={x.id} t={x} selected={tid === x.id} onClick={() => setTid(x.id)} />

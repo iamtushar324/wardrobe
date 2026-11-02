@@ -24,7 +24,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from . import catalog, db, vision
+from . import catalog, db, finish, media, vision
 from .config import settings
 from .jobs import Retry, enqueue as enqueue_job, handler
 
@@ -56,7 +56,8 @@ TEMPLATES: list[dict] = [
     {"id": "white-bg-cloth-only", "name": "Product · white", "icon": "shirt", "needs_person": False, "multi_item": False,
      "aspect": "square", "group": "Product",
      "description": "The piece alone on pure white, like a shop listing. Great as the gallery cover.",
-     "prompt": "A clean e-commerce product photo of the {item} on its own: front view, centred, neatly shaped, on a pure "
+     "prompt": "A clean e-commerce product photo of the {item} on its own: front view, upright the way it is worn (top of "
+               "the garment at the top of the frame), centred, neatly shaped, on a pure "
                "white (#FFFFFF) seamless background with a very soft natural shadow. No person, no mannequin, no hanger, "
                "no props, no text."},
     {"id": "me-lifestyle", "name": "Me · lifestyle", "icon": "sun", "needs_person": True, "multi_item": False,
@@ -117,7 +118,13 @@ TEMPLATES: list[dict] = [
      "prompt": "A macro close-up photo of the fabric texture, print and stitching of the {item}, raking soft light that "
                "shows the weave, shallow depth of field."},
 ]
-TEMPLATE_IDS = {t["id"] for t in TEMPLATES}
+# "Try on" edits one of your own photos: only the chosen clothes change. It has its own page and options,
+# so it never shows up among the templates you queue for items or switch to auto.
+TRYON = {"id": "tryon", "name": "Try on", "icon": "replace", "needs_person": True, "multi_item": True,
+         "aspect": "portrait", "group": "Try on", "tryon": True,
+         "description": "One of your own photos with the outfit swapped; everything else stays as it was.",
+         "prompt": "Edit image 1 so the person wears {items}."}
+TEMPLATE_IDS = {t["id"] for t in TEMPLATES} | {TRYON["id"]}
 
 DEFAULT_PREFS = {
     "paused": False,
@@ -155,7 +162,7 @@ def save_prefs(owner_id: str, changes: dict, actor: str) -> dict:
         elif k == "engine":
             cur[k] = v if v in ("chatgpt", "openrouter") else "chatgpt"
         elif k == "auto_templates":
-            known = {t["id"] for t in templates(owner_id)}
+            known = {t["id"] for t in templates(owner_id) if not t.get("tryon")}
             cur[k] = [t for t in (v or []) if t in known]
         elif k == "model_photo_ids":
             ids = [i for i in (v or []) if db.one("SELECT 1 FROM photos WHERE id=? AND owner_id=? AND deleted_at IS NULL",
@@ -173,7 +180,7 @@ def templates(owner_id: str) -> list[dict]:
                "multi_item": bool(t["multi_item"]), "aspect": t["aspect"], "group": "Custom",
                "description": t["description"] or "", "prompt": t["prompt"], "custom": True}
               for t in db.q("SELECT * FROM gen_templates WHERE owner_id=? ORDER BY created_at", (owner_id,))]
-    return [*TEMPLATES, *custom]
+    return [*TEMPLATES, TRYON, *custom]
 
 
 def template(owner_id: str, tid: str) -> dict:
@@ -271,6 +278,146 @@ def item_ref_sha(item_id: str) -> str | None:
     return best.get("cutout_sha") or best.get("crop_sha") or best["sha256"]
 
 
+# ---------------- try on ----------------
+TRYON_DEFAULTS = {
+    "background": "keep",   # keep | tidy | studio | blur | scene
+    "scene": "",            # where to put them when background == scene
+    "keep_rest": True,      # keep the clothes and accessories that are not being swapped
+    "light": False,         # even out exposure and white balance
+    "smooth": False,        # freshly pressed: no creases or lint on the new clothes
+    "crop": "original",     # original | card (3:4) | square | tight  - done on the server after generation
+    "transparent": False,   # cut the person out (transparent background) - done on the server
+    "cover": False,         # make the result the item's main picture
+    "variants": 1,          # how many versions to make (1-3)
+    "extra": "",
+}
+BACKGROUNDS = ("keep", "tidy", "studio", "blur", "scene")
+CROPS = ("original", "card", "square", "tight")
+
+SLOT = {"top": "top", "bottom": "trousers or skirt", "outerwear": "outer layer (jacket, over the top)",
+        "dress": "outfit (it replaces both the top and the bottom)", "activewear": "matching garment",
+        "lounge": "matching garment", "innerwear": "matching garment", "footwear": "shoes", "bag": "bag",
+        "ethnic": "matching garment"}
+
+
+def tryon_options(raw: dict | None) -> dict:
+    o = {**TRYON_DEFAULTS}
+    raw = raw or {}
+    for k in ("keep_rest", "light", "smooth", "transparent", "cover"):
+        if k in raw:
+            o[k] = bool(raw[k])
+    if raw.get("background") in BACKGROUNDS:
+        o["background"] = raw["background"]
+    if raw.get("crop") in CROPS:
+        o["crop"] = raw["crop"]
+    o["scene"] = str(raw.get("scene") or "").strip()[:300]
+    o["extra"] = str(raw.get("extra") or "").strip()[:600]
+    if o["background"] == "scene" and not o["scene"]:
+        o["background"] = "keep"
+    try:
+        o["variants"] = max(1, min(int(raw.get("variants") or 1), 3))
+    except (TypeError, ValueError):
+        o["variants"] = 1
+    return o
+
+
+def _slot(item: dict) -> str:
+    if item.get("category") in ("ethnic", "accessory", "activewear", "lounge", "innerwear") and item.get("subcategory"):
+        return item["subcategory"]
+    return SLOT.get(item.get("category") or "", item.get("subcategory") or "garment")
+
+
+def _shape(width: int | None, height: int | None) -> str:
+    if not width or not height:
+        return "portrait"
+    r = height / width
+    return "portrait" if r > 1.12 else ("landscape" if r < 0.89 else "square")
+
+
+def build_tryon_prompt(items: list[dict], o: dict, width: int | None = None, height: int | None = None,
+                       with_ref: set[str] | None = None) -> str:
+    """with_ref: the items that have a reference picture; they are images 2, 3... in the order given."""
+    with_ref = {i["id"] for i in items} if with_ref is None else with_ref
+    pieces, n = [], 1
+    for it in items:
+        if it["id"] in with_ref:
+            n += 1
+            pieces.append(f"image {n}: {_item_desc(it)} - their new {_slot(it)}")
+        else:
+            pieces.append(f"(no picture, follow the description) {_item_desc(it)} - their new {_slot(it)}")
+    lines = [
+        "Edit image 1. It is a real photo of a person. Change ONLY what is described below; everything else must stay "
+        "exactly as it is in image 1, as if this were the same photo.",
+        f"Dress the person in these clothes: {'; '.join(pieces)}. "
+        "Each new piece replaces what they wear in that place now. Reproduce every piece faithfully from its reference "
+        "image: same colour, pattern, fabric, cut, length, logos and details. Fit it naturally to their body and pose, "
+        "with realistic folds and shadows that match the light in image 1.",
+        "Keep every other garment, shoe and accessory they wear exactly as it is." if o["keep_rest"] else
+        "Restyle the rest of the outfit with simple pieces that go well with the new clothes.",
+        "Do not change their face, expression, hair, skin tone, body shape, pose, hands or anything that makes them "
+        "recognisable.",
+    ]
+    bg = {
+        "keep": "Keep the background, the scene and the lighting exactly as they are.",
+        "tidy": "Tidy the background: remove clutter, mess and any other people, but keep the same place, perspective "
+                "and light.",
+        "studio": "Replace the background with a seamless pure white (#FFFFFF) studio backdrop with soft, even light "
+                  "and a gentle shadow on the floor.",
+        "blur": "Keep the same place, but softly blur the background like a portrait-mode photo so the person stands "
+                "out.",
+        "scene": f"Move the person into this setting: {o['scene']}. Match the light on them to the new setting.",
+    }[o["background"]]
+    lines.append(bg)
+    if o["light"]:
+        lines.append("Correct the exposure and white balance so the photo looks bright, natural and evenly lit, "
+                     "without changing their skin tone.")
+    if o["smooth"]:
+        lines.append("Make the new clothes look freshly pressed: no creases, lint or stains.")
+    shape = {"portrait": "vertical", "square": "square", "landscape": "horizontal"}[_shape(width, height)]
+    lines.append(f"Keep the same camera angle, framing and {shape} aspect ratio as image 1. Photorealistic; the result "
+                 "must look like the original photo, not a new photo shoot. No added text, watermarks or logos.")
+    if o["extra"]:
+        lines.append(f"Also: {o['extra']}")
+    return "\n\n".join(lines)
+
+
+def enqueue_tryon(owner_id: str, photo_id: str, item_ids: list[str], options: dict | None, requested_by: str,
+                  source: str = "manual", engine: str | None = None, priority: int = 0) -> list[dict]:
+    """Queue edits of one of your photos with other clothes (one job per version)."""
+    photo = catalog.get_photo(owner_id, photo_id)
+    if photo["kind"] in ("tag", "receipt"):
+        raise HTTPException(422, "pick a photo of a person for try-on")
+    ids = list(dict.fromkeys(i for i in item_ids if i))
+    if not ids:
+        raise HTTPException(422, "choose at least one item to wear")
+    if len(ids) > 6:
+        raise HTTPException(422, "try-on takes up to 6 items at once")
+    items = [catalog.get_item(owner_id, i) for i in ids]
+    o = tryon_options(options)
+    o["aspect"] = _shape(photo.get("width"), photo.get("height"))
+    p = prefs(owner_id)
+    engine = engine if engine in ("chatgpt", "openrouter") else p["engine"]
+    with_ref = [i["id"] for i in items if item_ref_sha(i["id"])]
+    missing = [i["name"] for i in items if i["id"] not in with_ref]
+    o["ref_items"] = with_ref
+    prompt = build_tryon_prompt(items, o, photo.get("width"), photo.get("height"), set(with_ref))
+    rows = []
+    with db.tx():
+        for v in range(o["variants"]):
+            row = {"id": db.new_id("gen"), "owner_id": owner_id, "requested_by": requested_by, "template": TRYON["id"],
+                   "item_ids": ids, "person_photo_id": photo_id, "engine": engine, "source": source,
+                   "status": "queued", "priority": priority, "prompt": prompt, "options": {**o, "variant": v + 1},
+                   "note": f"no photo of {', '.join(missing)} yet - drawn from the description" if missing else None,
+                   "created_at": db.now()}
+            db.insert("gen_jobs", row)
+            if engine == "openrouter":
+                enqueue_job("gen_openrouter", {"job_id": row["id"]})
+            rows.append(row)
+        db.audit(requested_by, "tryon_queued", owner_id, photo_id, {"items": ids, "versions": o["variants"],
+                                                                     "options": {k: v for k, v in o.items() if k != "extra"}})
+    return [db.one("SELECT * FROM gen_jobs WHERE id=?", (r["id"],)) for r in rows]
+
+
 # ---------------- queue ----------------
 def job_out(j: dict, items: dict[str, dict] | None = None, position: int | None = None) -> dict:
     ids = db.loads(j["item_ids"], [])
@@ -279,6 +426,12 @@ def job_out(j: dict, items: dict[str, dict] | None = None, position: int | None 
                                   "duration_s", "cost_usd", "created_at", "claimed_at", "finished_at"]}
     out["item_ids"] = ids
     out["prompt"] = j["prompt"]
+    o = job_options(j)
+    out["options"] = {k: v for k, v in o.items() if k not in ("meta", "raw_sha", "ref_items")}
+    out["finishing"] = bool(o.get("raw_sha")) and j["status"] == "running"
+    if j["template"] == TRYON["id"] and j.get("person_photo_id"):
+        ph = db.one("SELECT sha256 FROM photos WHERE id=? AND deleted_at IS NULL", (j["person_photo_id"],))
+        out["base"] = catalog._image(ph["sha256"]) if ph else None
     if items is not None:
         out["items"] = [{"id": i, "name": items[i]["name"], "cover": catalog.cover_for(items[i])} for i in ids if i in items]
     if j.get("result_photo_id"):
@@ -294,6 +447,8 @@ def job_out(j: dict, items: dict[str, dict] | None = None, position: int | None 
 def enqueue(owner_id: str, template_id: str, item_ids: list[str], requested_by: str, source: str = "manual",
             person_photo_id: str | None = None, engine: str | None = None, extra: str = "", priority: int = 0) -> list[dict]:
     t = template(owner_id, template_id)
+    if t.get("tryon"):
+        raise HTTPException(422, "try-on edits one of your photos; use the Try on page (POST /studio/tryon)")
     p = prefs(owner_id)
     items = []
     for iid in item_ids:
@@ -398,6 +553,10 @@ def retry(owner_id: str, job_id: str, actor: str, engine: str | None = None) -> 
     if j["status"] in ("queued", "running") and not engine:
         return j
     fields = {"status": "queued", "error": None, "attempts": 0, "claimed_at": None, "finished_at": None}
+    o = job_options(j)
+    if o.pop("raw_sha", None):  # a half-finished picture from the last attempt is not reused
+        o.pop("meta", None)
+        fields["options"] = o
     if engine in ("chatgpt", "openrouter"):
         if j["status"] == "running":
             raise HTTPException(409, "this job is running; cancel it first")
@@ -433,6 +592,9 @@ def _requeue_expired() -> None:
     now = db.now()
     for j in db.q("SELECT * FROM gen_jobs WHERE status='running' AND claimed_at<?", (now - CLAIM_TTL,)):
         with db.tx():
+            if job_options(j).get("raw_sha"):  # the picture is made; only the finishing touches are pending
+                enqueue_job("gen_finish", {"job_id": j["id"]})
+                continue
             if j["attempts"] >= MAX_ATTEMPTS:
                 db.update("gen_jobs", j["id"], {"status": "failed", "error": "the worker did not finish it in time",
                                                 "finished_at": now})
@@ -537,19 +699,99 @@ def overview(owner_id: str) -> dict:
 
 
 # ---------------- results ----------------
+def job_options(job: dict) -> dict:
+    return db.loads(job.get("options"), {}) or {}
+
+
+def _refs(j: dict) -> list[str]:
+    """Reference pictures in prompt order: the person (or the photo to edit) first, then the clothes."""
+    refs = []
+    if j.get("person_photo_id"):
+        ph = db.one("SELECT sha256 FROM photos WHERE id=?", (j["person_photo_id"],))
+        if ph:
+            refs.append(ph["sha256"])
+    o = job_options(j)
+    for iid in o["ref_items"] if "ref_items" in o else db.loads(j["item_ids"], []):
+        sha = item_ref_sha(iid)
+        if sha:
+            refs.append(sha)
+    return refs
+
+
+def _aspect(j: dict) -> str:
+    return job_options(j).get("aspect") or template(j["owner_id"], j["template"])["aspect"]
+
+
+def _needs_finish(job: dict) -> bool:
+    o = job_options(job)
+    return o.get("crop", "original") != "original" or bool(o.get("transparent"))
+
+
+def _deliver(job: dict, raw: bytes, meta: dict, defer: bool) -> dict | None:
+    """Save a finished picture. Framing and cut-outs need the cut-out model, which lives in the background
+    worker, so a web request (defer=True) stores the raw picture and hands the finishing over."""
+    if not _needs_finish(job):
+        return _save_result(job, raw, meta)
+    if defer:
+        info = media.ingest(raw)
+        with db.tx():
+            db.update("gen_jobs", job["id"], {"options": {**job_options(job), "raw_sha": info["sha"], "meta": meta},
+                                              "note": "finishing touches (framing / cut-out)"})
+            enqueue_job("gen_finish", {"job_id": job["id"]})
+        return None
+    return _save_result(job, _finished_bytes(job, media.ingest(raw)["sha"]), meta)
+
+
+def _finished_bytes(job: dict, sha: str) -> bytes:
+    o = job_options(job)
+    img = finish.finish(media.open_full(sha), o.get("crop", "original"), bool(o.get("transparent")),
+                        white_bg=o.get("background") == "studio")
+    return finish.encode(img)
+
+
+@handler("gen_finish")
+def gen_finish(payload: dict) -> None:
+    j = db.one("SELECT * FROM gen_jobs WHERE id=?", (payload["job_id"],))
+    if not j or j["status"] != "running":
+        return
+    o = job_options(j)
+    if not o.get("raw_sha"):
+        return
+    try:
+        data = _finished_bytes(j, o["raw_sha"])
+    except Exception as exc:  # never lose the picture: keep it unfinished and say why
+        log.warning("finishing %s failed: %s", j["id"], exc)
+        data = media.path(o["raw_sha"], "full").read_bytes()
+        o["meta"] = {**(o.get("meta") or {}), "finish_error": str(exc)[:200]}
+    _save_result(j, data, o.get("meta") or {})
+
+
 def _save_result(job: dict, raw: bytes, meta: dict) -> dict:
     t = template(job["owner_id"], job["template"])
+    o = job_options(job)
+    tryon = job["template"] == TRYON["id"]
+    note = t["name"]
+    if tryon and job.get("person_photo_id"):
+        note = f"Try on · from photo {job['person_photo_id']}"
     photo, _ = catalog.add_photo(job["owner_id"], raw, f"studio:{job['engine']}", kind="worn" if t["needs_person"] else "product",
                                  source="generated", ai=True, template=job["template"], gen_job_id=job["id"],
-                                 note=t["name"], people=[job["owner_id"]] if t["needs_person"] else None)
+                                 note=note, people=[job["owner_id"]] if t["needs_person"] else None)
     for iid in db.loads(job["item_ids"], []):
         if db.one("SELECT 1 FROM items WHERE id=? AND deleted_at IS NULL", (iid,)):
-            catalog.add_link(job["owner_id"], photo["id"], iid, "generated", None, f"studio:{job['engine']}",
-                             confirmed=True, enqueue_cutout=False)
+            link = catalog.add_link(job["owner_id"], photo["id"], iid, "generated", None, f"studio:{job['engine']}",
+                                    confirmed=True, enqueue_cutout=False)
+            if tryon and o.get("cover"):
+                with db.tx():
+                    db.update("items", iid, {"cover_link_id": link["id"], "updated_at": db.now()})
+    if meta.get("finish_error"):
+        meta["note"] = f"saved without finishing touches: {meta['finish_error']}"
+    fields = {"status": "done", "result_photo_id": photo["id"], "finished_at": db.now(),
+              "duration_s": meta.get("duration_s"), "cost_usd": meta.get("cost_usd"),
+              "account_email": meta.get("account_email"), "error": None}
+    if _needs_finish(job):
+        fields["note"] = meta.get("note")
     with db.tx():
-        db.update("gen_jobs", job["id"], {"status": "done", "result_photo_id": photo["id"], "finished_at": db.now(),
-                                          "duration_s": meta.get("duration_s"), "cost_usd": meta.get("cost_usd"),
-                                          "account_email": meta.get("account_email"), "error": None})
+        db.update("gen_jobs", job["id"], fields)
         db.bump_usage(job["owner_id"], f"image:{job['engine']}", meta.get("cost_usd"))
     return photo
 
@@ -570,19 +812,10 @@ def gen_openrouter(payload: dict) -> None:
         if not db.run("UPDATE gen_jobs SET status='running', claimed_at=?, attempts=attempts+1 WHERE id=? AND status='queued'",
                       (db.now(), j["id"])):
             return
-    refs = []
-    if j.get("person_photo_id"):
-        ph = db.one("SELECT sha256 FROM photos WHERE id=?", (j["person_photo_id"],))
-        if ph:
-            refs.append(ph["sha256"])
-    for iid in db.loads(j["item_ids"], []):
-        sha = item_ref_sha(iid)
-        if sha:
-            refs.append(sha)
-    t = template(j["owner_id"], j["template"])
+    refs = _refs(j)
     started = time.time()
     try:
-        raw, meta = vision.generate_image(j["owner_id"], j["prompt"], refs, ASPECTS.get(t["aspect"], "3:4"))
+        raw, meta = vision.generate_image(j["owner_id"], j["prompt"], refs, ASPECTS.get(_aspect(j), "3:4"))
     except Exception as exc:
         with db.tx():
             if (j["attempts"] + 1) >= MAX_ATTEMPTS:
@@ -595,7 +828,7 @@ def gen_openrouter(payload: dict) -> None:
     if cur and cur["status"] == "cancelled":
         return
     meta["duration_s"] = round(time.time() - started, 1)
-    _save_result(j, raw, meta)
+    _deliver(j, raw, meta, defer=False)
 
 
 def tick() -> None:
@@ -689,18 +922,10 @@ def worker_claim(ready_users: list[str]) -> dict | None:
         if not j:
             return None
         db.run("UPDATE gen_jobs SET status='running', claimed_at=?, attempts=attempts+1 WHERE id=?", (db.now(), j["id"]))
-    refs = []
-    if j.get("person_photo_id"):
-        ph = db.one("SELECT sha256 FROM photos WHERE id=?", (j["person_photo_id"],))
-        if ph:
-            refs.append(ph["sha256"])
-    for iid in db.loads(j["item_ids"], []):
-        sha = item_ref_sha(iid)
-        if sha:
-            refs.append(sha)
+    refs = _refs(j)
     t = template(j["owner_id"], j["template"])
     return {"id": j["id"], "user_id": j["owner_id"], "prompt": j["prompt"], "template": j["template"],
-            "template_name": t["name"], "aspect": t["aspect"],
+            "template_name": t["name"], "aspect": _aspect(j),
             "inputs": [f"/api/worker/media/{sha}" for sha in refs], "attempt": j["attempts"] + 1}
 
 
@@ -712,8 +937,8 @@ def worker_complete(job_id: str, raw: bytes, meta: dict) -> dict:
         raise HTTPException(409, f"job is {j['status']}")
     a = account(j["owner_id"])
     meta["account_email"] = a.get("email")
-    photo = _save_result(j, raw, meta)
-    return {"photo_id": photo["id"]}
+    photo = _deliver(j, raw, meta, defer=True)
+    return {"photo_id": photo["id"] if photo else None, "finishing": photo is None}
 
 
 def worker_fail(job_id: str, error: str, limited: bool, retry_it: bool) -> None:

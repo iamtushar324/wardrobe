@@ -10,7 +10,8 @@ def fake_analyze(owner_id, sha, hint=""):
     if name.startswith("flat"):
         return {"kind": "flat_lay", "people": 0, "summary": "two items on a bed", "items": [
             {"bbox": [0.05, 0.05, 0.45, 0.6], "category": "top", "subcategory": "t-shirt", "name": "White tee",
-             "colors": ["white"], "seasons": ["summer"], "occasions": ["casual"], "confidence": 0.9},
+             "colors": ["white"], "seasons": ["summer"], "occasions": ["casual"], "confidence": 0.9,
+             "rotation": 90},
             {"bbox": [0.5, 0.1, 0.95, 0.9], "category": "bottom", "subcategory": "jeans", "name": "Blue jeans",
              "colors": ["blue"], "seasons": ["all-season"], "occasions": ["casual"], "confidence": 0.85}]}
     if name.startswith("tag"):
@@ -18,7 +19,7 @@ def fake_analyze(owner_id, sha, hint=""):
                                                     "materials": "98% cotton 2% elastane"}}
     return {"kind": "worn", "people": 1, "items": [
         {"bbox": [0.3, 0.3, 0.7, 0.95], "category": "bottom", "subcategory": "jeans", "name": "Blue jeans",
-         "colors": ["blue"], "confidence": 0.8}]}
+         "colors": ["blue"], "confidence": 0.8, "rotation": 90}]}
 
 
 def fake_group(owner_id, crops, existing):
@@ -52,6 +53,14 @@ def test_folder_import(client, monkeypatch):
     props = {p["data"]["name"]: p for p in view["proposals"]}
     assert set(props) == {"White tee", "Blue jeans"}
     jeans = props["Blue jeans"]
+    # the tee lay sideways on the bed: its crop is turned upright (portrait box -> landscape picture after 90°);
+    # clothes being worn are never turned
+    from wardrobe import media
+    tw, th = media.open_full(props["White tee"]["links"][0]["crop"]["sha"]).size
+    assert tw > th
+    worn = next(l for l in jeans["links"] if l["role"] == "worn")
+    ww, wh = media.open_full(worn["crop"]["sha"]).size
+    assert wh > ww
     assert {l["role"] for l in jeans["links"]} == {"shows", "worn", "tag"}
     assert jeans["data"]["brand"] == "Levi's" and jeans["data"]["original_price"] == 3999
     assert jeans["data"]["store"] == "Mall of India" and jeans["data"]["provenance"]["store"] == "user"

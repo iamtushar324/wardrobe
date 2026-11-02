@@ -269,6 +269,10 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX audit_owner ON audit(owner_id, at);
     """,
+    # 2: per-job options (try-on settings, finishing state)
+    """
+    ALTER TABLE gen_jobs ADD COLUMN options TEXT NOT NULL DEFAULT '{}';
+    """,
 ]
 
 _local = threading.local()

@@ -10,6 +10,7 @@ import Login from "./pages/Login";
 import PhotoPage from "./pages/Photo";
 import Settings from "./pages/Settings";
 import Studio from "./pages/Studio";
+import TryOn from "./pages/TryOn";
 import Upload from "./pages/Upload";
 import { Spinner } from "./ui";
 
@@ -48,6 +49,7 @@ export default function App() {
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/inbox/:id" element={<BatchReview />} />
           <Route path="/studio" element={<Studio />} />
+          <Route path="/tryon" element={<TryOn />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

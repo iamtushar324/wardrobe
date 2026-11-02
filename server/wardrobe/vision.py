@@ -102,6 +102,11 @@ ANALYZE = """You are cataloguing a personal wardrobe from ONE photo. Reply with 
    - "styles": 1-3 short style words (e.g. "minimal", "streetwear", "smart casual")
    - "formality": 1 (very casual) to 5 (black tie)
    - "brand": only if a logo or label is legible, else null
+   - "rotation": 0, 90, 180 or 270 - how many degrees CLOCKWISE the cropped item must be turned to stand upright
+     the way it is worn or displayed: tops, dresses and jackets with the neckline/collar at the top, trousers and
+     skirts with the waistband at the top, shoes standing on their soles, bags with the handle at the top. Items
+     laid flat on a bed are often sideways or upside down in the photo. Use 0 when it is already upright or has no
+     up direction (e.g. a scarf or sunglasses), and always 0 for clothes a person is wearing.
    - "confidence": 0-1
 3. If the photo is a tag/label, fill "tag": {"brand", "size", "size_system" (IN/UK/US/EU/intl), "materials",
    "care", "mrp" (number: printed MRP / original price), "price" (number: sale price if a separate one is

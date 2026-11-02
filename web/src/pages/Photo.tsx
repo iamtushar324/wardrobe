@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Link2, Sparkles, Trash2, UserRound, X } from "lucide-react";
+import { ArrowLeft, Link2, Replace, RotateCcw, RotateCw, Sparkles, Trash2, UserRound, X } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Photo, type Studio } from "../api";
@@ -49,6 +49,14 @@ export default function PhotoPage() {
     toast("Photo deleted");
     nav(-1);
   };
+  const turn = useMutation({
+    mutationFn: (degrees: number) => api<Photo>(`/photos/${id}/rotate`, { body: { degrees } }),
+    onSuccess: (ph) => {
+      set(ph);
+      qc.invalidateQueries({ queryKey: ["item"] });
+    },
+    onError: (e: any) => toast(e.message, "error"),
+  });
   const modelIds = studio.data?.prefs.model_photo_ids || [];
   const isModel = !!p && modelIds.includes(p.id);
   const toggleModel = async () => {
@@ -76,6 +84,16 @@ export default function PhotoPage() {
         <div className="lg:sticky lg:top-6 lg:self-start">
           <div className="relative mx-auto w-fit overflow-hidden rounded-3xl bg-[#ebe7e0]">
             <img src={p.image.lg} alt="" className="max-h-[78vh] w-auto" />
+            {me.can_edit && (
+              <div className="absolute right-3 top-3 z-10 flex gap-1.5">
+                <Button size="icon" variant="secondary" disabled={turn.isPending} onClick={() => turn.mutate(-90)} title="Turn left">
+                  <RotateCcw className="size-4" />
+                </Button>
+                <Button size="icon" variant="secondary" disabled={turn.isPending} onClick={() => turn.mutate(90)} title="Turn right">
+                  <RotateCw className="size-4" />
+                </Button>
+              </div>
+            )}
             {links.map(
               (l) =>
                 l.bbox && (
@@ -168,6 +186,13 @@ export default function PhotoPage() {
                 <Textarea rows={2} value={note ?? p.note ?? ""} onChange={(e) => setNote(e.target.value)} onBlur={() => note !== null && note !== (p.note || "") && patch.mutate({ note })} />
               </Field>
               <div className="flex flex-wrap gap-2">
+                {p.kind === "worn" && (
+                  <Link to={`/tryon?photo=${p.id}`}>
+                    <Button variant="primary">
+                      <Replace className="size-4" /> Try on other clothes
+                    </Button>
+                  </Link>
+                )}
                 {p.kind === "worn" && !p.ai && (
                   <Button variant={isModel ? "soft" : "secondary"} onClick={toggleModel}>
                     <UserRound className="size-4" /> {isModel ? "Stop using as model photo" : "Use as my model photo"}

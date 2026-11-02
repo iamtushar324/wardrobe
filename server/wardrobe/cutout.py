@@ -69,6 +69,34 @@ def mask(img: Image.Image) -> Image.Image:
     return m.resize(rgb.size, Image.LANCZOS)
 
 
+def clean_mask(img: Image.Image) -> Image.Image:
+    """Foreground mask with a soft edge but without the faint halo pixels."""
+    return mask(img).point(lambda v: 0 if v < 24 else (255 if v > 232 else v))
+
+
+def subject_box(img: Image.Image) -> tuple[int, int, int, int] | None:
+    """Pixel box around the main subject (a person or a garment), or None if nothing stands out."""
+    small = img.convert("RGB")
+    scale = 1.0
+    if max(small.size) > 1024:
+        scale = max(small.size) / 1024
+        small = small.resize((round(small.width / scale), round(small.height / scale)), Image.LANCZOS)
+    box = clean_mask(small).point(lambda v: 255 if v > 80 else 0).getbbox()
+    if not box:
+        return None
+    x0, y0, x1, y1 = (round(v * scale) for v in box)
+    if (x1 - x0) * (y1 - y0) < 0.02 * img.width * img.height:
+        return None
+    return min(x0, img.width), min(y0, img.height), min(x1, img.width), min(y1, img.height)
+
+
+def cut(img: Image.Image) -> Image.Image:
+    """The image with its background made transparent (same size)."""
+    rgba = img.convert("RGB").copy()
+    rgba.putalpha(clean_mask(img))
+    return rgba
+
+
 def cutout(sha: str) -> dict | None:
     """Remove the background of a stored image; returns the stored RGBA cutout {sha,...} or None."""
     if not settings.cutouts:
@@ -76,9 +104,7 @@ def cutout(sha: str) -> dict | None:
     img = media.open_full(sha).convert("RGB")
     if max(img.size) > 1600:
         img.thumbnail((1600, 1600), Image.LANCZOS)
-    m = mask(img)
-    # Soften the edge but drop faint halo pixels.
-    m = m.point(lambda v: 0 if v < 24 else (255 if v > 232 else v))
+    m = clean_mask(img)
     bbox = m.point(lambda v: 255 if v > 40 else 0).getbbox()
     if not bbox:
         return None

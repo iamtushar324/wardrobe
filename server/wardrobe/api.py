@@ -210,6 +210,13 @@ def delete_photo(photo_id: str, ctx: Ctx = Depends(require)):
     return {"ok": True}
 
 
+@router.post("/photos/{photo_id}/rotate")
+def rotate_photo(photo_id: str, body: dict = Body(...), ctx: Ctx = Depends(require)):
+    """Turn a whole photo clockwise: {"degrees": 90 | 180 | 270 | -90}."""
+    ctx.need_write()
+    return catalog.rotate_photo(ctx.owner_id, photo_id, body.get("degrees") or 0, ctx.actor)
+
+
 @router.post("/photos/{photo_id}/links")
 def link_photo(photo_id: str, body: dict = Body(...), ctx: Ctx = Depends(require)):
     """Link a photo to an item: {item_id, role, bbox?}. With a bbox the crop and cutout are made in the background."""
@@ -224,6 +231,14 @@ def patch_link(link_id: str, body: dict = Body(...), ctx: Ctx = Depends(require)
     ctx.need_write()
     link = catalog.update_link(ctx.owner_id, link_id, body, ctx.actor)
     return catalog.photo_full(ctx.owner_id, link["photo_id"])
+
+
+@router.post("/links/{link_id}/rotate")
+def rotate_link(link_id: str, body: dict = Body(...), ctx: Ctx = Depends(require)):
+    """Turn an item's picture from a photo: {"degrees": 90 | 180 | 270 | -90} (clockwise)."""
+    ctx.need_write()
+    link = catalog.rotate_link(ctx.owner_id, link_id, body.get("degrees") or 0, ctx.actor)
+    return catalog.item_out(catalog.get_item(ctx.owner_id, link["item_id"]), full=True)
 
 
 @router.delete("/links/{link_id}")
@@ -336,6 +351,17 @@ def studio_create(body: dict = Body(...), ctx: Ctx = Depends(require)):
     jobs = studio.enqueue(ctx.owner_id, body.get("template") or "", body.get("item_ids") or [], ctx.actor,
                           "agent" if ctx.is_agent else "manual", body.get("person_photo_id"), body.get("engine"),
                           body.get("extra") or "", int(body.get("priority") or 0))
+    return {"jobs": [studio.job_out(j) for j in jobs]}
+
+
+@router.post("/studio/tryon")
+def studio_tryon(body: dict = Body(...), ctx: Ctx = Depends(require)):
+    """Try on: {photo_id, item_ids:[...], options:{background, scene, keep_rest, light, smooth, crop, transparent,
+    cover, variants, extra}, engine?}. Edits one of your photos so you wear the items; one job per version."""
+    ctx.need_write()
+    jobs = studio.enqueue_tryon(ctx.owner_id, body.get("photo_id") or "", body.get("item_ids") or [],
+                                body.get("options") or {}, ctx.actor, "agent" if ctx.is_agent else "manual",
+                                body.get("engine"), int(body.get("priority") or 0))
     return {"jobs": [studio.job_out(j) for j in jobs]}
 
 

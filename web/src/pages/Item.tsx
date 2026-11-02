@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ExternalLink, Heart, ImagePlus, Scissors, Sparkles, Trash2, User } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, Heart, ImagePlus, Replace, RotateCcw, RotateCw, Scissors, Sparkles, Trash2, User } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, uploadForm, type Item, type ItemPhoto } from "../api";
@@ -63,6 +63,21 @@ export default function ItemPage() {
       toast("Marked as worn today");
     },
   });
+  // Turn what is on screen: the item's own picture (crop / cut-out), or the whole photo when it is shown.
+  const turn = useMutation({
+    mutationFn: async ({ p, degrees, whole }: { p: ItemPhoto; degrees: number; whole: boolean }) => {
+      if (whole) {
+        await api(`/photos/${p.photo.id}/rotate`, { body: { degrees } });
+        return api<Item>(`/items/${id}`);
+      }
+      return api<Item>(`/links/${p.link_id}/rotate`, { body: { degrees } });
+    },
+    onSuccess: (it) => {
+      qc.setQueryData(["item", id], it);
+      qc.invalidateQueries({ queryKey: ["items"] });
+    },
+    onError: (e: any) => toast(e.message, "error"),
+  });
   const remove = async () => {
     if (!confirm(`Delete “${item?.name}”? Its photos stay in your library.`)) return;
     await api(`/items/${id}`, { method: "DELETE" });
@@ -118,6 +133,28 @@ export default function ItemPage() {
               {current && <Badge tone="dark">{current.photo.ai ? "AI picture" : cap(current.role === "shows" ? "photo" : current.role)}</Badge>}
             </div>
             <div className="absolute right-3 top-3 flex gap-1.5">
+              {current && me.can_edit && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={turn.isPending}
+                    onClick={() => turn.mutate({ p: current, degrees: -90, whole: !(cutoutView && current.cutout) })}
+                    title="Turn left"
+                  >
+                    <RotateCcw className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={turn.isPending}
+                    onClick={() => turn.mutate({ p: current, degrees: 90, whole: !(cutoutView && current.cutout) })}
+                    title="Turn right"
+                  >
+                    <RotateCw className="size-3.5" />
+                  </Button>
+                </>
+              )}
               {current?.cutout && (
                 <Button size="sm" variant="secondary" onClick={() => setCutoutView(!cutoutView)}>
                   <Scissors className="size-3.5" /> {cutoutView ? "Original" : "Cut out"}
@@ -220,7 +257,12 @@ export default function ItemPage() {
           </div>
           {me.can_edit && (
             <div className="mt-5 flex flex-wrap gap-2">
-              <Button variant="primary" onClick={() => setGen(true)}>
+              <Link to={`/tryon?items=${item.id}`}>
+                <Button variant="primary">
+                  <Replace className="size-4" /> Try it on
+                </Button>
+              </Link>
+              <Button onClick={() => setGen(true)}>
                 <Sparkles className="size-4" /> AI pictures
               </Button>
               <Button onClick={() => wear.mutate()} loading={wear.isPending}>

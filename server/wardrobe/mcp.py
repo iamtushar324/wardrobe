@@ -45,6 +45,8 @@ If the server has no vision configured, create items yourself with wardrobe_add_
 
 AI pictures (Studio): wardrobe_templates, wardrobe_generate (template + item_ids). They are queued and made with
 the owner's ChatGPT subscription; wardrobe_generation_queue lists, cancels, retries, pauses or resumes.
+Try-on: wardrobe_try_on edits one of the owner's own photos (photo_id, e.g. from wardrobe_list_photos with
+person=me, kind=worn) so they wear the chosen items; everything else in the photo stays the same unless options say otherwise.
 Ask the owner before deleting anything. Link the owner to items as {settings.public_url}/item/<item_id>."""
 
 S = {"type": "string"}
@@ -149,6 +151,12 @@ TOOLS = [
      "multi-item templates). Generated with the owner's ChatGPT subscription through a queue.",
      "inputSchema": _schema({"template": S, "item_ids": SA, "person_photo_id": S, "extra": S,
                              "engine": {"type": "string", "enum": ["chatgpt", "openrouter"]}}, ["template", "item_ids"])},
+    {"name": "wardrobe_try_on", "description": "Edit one of the owner's photos so they wear other items from the "
+     "wardrobe; by default only the clothes change. Options: background keep|tidy|studio|blur|scene (+scene text), "
+     "keep_rest, light, smooth, crop original|card|square|tight, transparent, cover (make it the item's main "
+     "picture), variants 1-3, extra (free text, e.g. 'remove the bag on the bed').",
+     "inputSchema": _schema({"photo_id": S, "item_ids": SA, "options": {"type": "object"},
+                             "engine": {"type": "string", "enum": ["chatgpt", "openrouter"]}}, ["photo_id", "item_ids"])},
     {"name": "wardrobe_generation_queue", "description": "Studio queue: action list (default) | cancel | retry | pause "
      "| resume. Shows usage, limits and whether ChatGPT is connected.",
      "inputSchema": _schema({"action": {"type": "string", "enum": ["list", "cancel", "retry", "pause", "resume"]},
@@ -218,7 +226,7 @@ def call(name: str, a: dict, ctx: auth.Ctx) -> Any:
         return taxonomy()
     if name == "wardrobe_templates":
         return {"templates": [{k: t[k] for k in ("id", "name", "group", "description", "needs_person", "multi_item")}
-                              for t in studio.templates(o)],
+                              for t in studio.templates(o) if not t.get("tryon")],
                 "model_photos": studio.prefs(o)["model_photo_ids"]}
     if name == "wardrobe_import_status":
         v = ingest.batch_view(o, a["batch_id"])
@@ -290,6 +298,12 @@ def call(name: str, a: dict, ctx: auth.Ctx) -> Any:
         return {"queued": [{"id": j["id"], "status": j["status"], "items": db.loads(j["item_ids"], [])} for j in jobs],
                 "will_run_now": ok, "waiting_because": reason or None,
                 "studio_url": f"{settings.public_url}/studio"}
+    if name == "wardrobe_try_on":
+        jobs = studio.enqueue_tryon(o, a["photo_id"], a["item_ids"], a.get("options") or {}, ctx.actor, "agent",
+                                    a.get("engine"))
+        ok, reason = studio.availability(o)
+        return {"queued": [{"id": j["id"], "status": j["status"]} for j in jobs], "will_run_now": ok,
+                "waiting_because": reason or None, "try_on_url": f"{settings.public_url}/tryon"}
     if name == "wardrobe_generation_queue":
         action = a.get("action") or "list"
         if action == "cancel":

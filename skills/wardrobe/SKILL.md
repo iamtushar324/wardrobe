@@ -53,7 +53,15 @@ Purchase fields carry provenance (`user`, `tag`, `receipt`, `agent`); say where 
 `needs_person` templates require a model photo, set by the owner in Studio.
 
 `wardrobe_generate {template, item_ids, extra?}` queues jobs; they run one at a time on the owner's own
-ChatGPT plan, within their daily cap. Use `wardrobe_generation_queue` to list, cancel, retry, pause or resume.
+ChatGPT plan, within their daily cap.
+
+`wardrobe_try_on {photo_id, item_ids, options?}` edits one of the owner's own photos so they wear the given
+items (up to 6, worn together) and keeps everything else as close to the original as possible. Find a photo
+with `wardrobe_list_photos {person: "me", kind: "worn"}`. Options (all optional): `background`
+(`keep` default, `tidy`, `studio`, `blur`, `scene` + `scene: "..."`), `keep_rest` (true), `light`, `smooth`,
+`crop` (`original` default, `card` = 3:4 closet card, `square`, `tight`), `transparent`, `cover` (use the
+result as each item's main picture), `variants` (1-3) and `extra` (free text such as "remove the bag behind
+me"). Results appear on the Try on page and in the owner's photos. Use `wardrobe_generation_queue` to list, cancel, retry, pause or resume.
 Do not queue large batches (more than ~20) without asking - it spends the owner's ChatGPT allowance.
 
 ## Rules

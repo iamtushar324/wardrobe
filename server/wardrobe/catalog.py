@@ -522,6 +522,62 @@ def add_link(owner_id: str, photo_id: str, item_id: str, role: str, bbox: list |
     return db.one("SELECT * FROM links WHERE id=?", (row["id"],))
 
 
+def rotate_link(owner_id: str, link_id: str, degrees: int, actor: str) -> dict:
+    """Turn the picture an item uses from a photo (its crop and cut-out), e.g. a garment shot sideways."""
+    turn = media.turns(degrees)
+    l = db.one("SELECT l.*, p.sha256 FROM links l JOIN photos p ON p.id=l.photo_id WHERE l.id=? AND p.owner_id=? "
+               "AND p.deleted_at IS NULL", (link_id, owner_id))
+    if not l:
+        raise HTTPException(404, "link not found")
+    if not turn:
+        raise HTTPException(422, "rotate by 90, 180 or 270 degrees (or -90)")
+    fields = {}
+    if l.get("cutout_sha"):
+        fields["cutout_sha"] = media.rotate(l["cutout_sha"], turn)["sha"]
+    # Without a crop the link shows the whole photo; a turned copy of it becomes the link's own picture.
+    fields["crop_sha"] = media.rotate(l.get("crop_sha") or l["sha256"], turn)["sha"]
+    with db.tx():
+        db.update("links", link_id, fields)
+        db.run("UPDATE items SET updated_at=? WHERE id=?", (db.now(), l["item_id"]))
+        db.audit(actor, "link_rotated", owner_id, link_id, {"degrees": turn})
+    return db.one("SELECT * FROM links WHERE id=?", (link_id,))
+
+
+def rotate_photo(owner_id: str, photo_id: str, degrees: int, actor: str) -> dict:
+    """Turn a whole photo (e.g. EXIF-less sideways upload); boxes, crops and cut-outs of its links turn with it."""
+    turn = media.turns(degrees)
+    p = get_photo(owner_id, photo_id)
+    if not turn:
+        raise HTTPException(422, "rotate by 90, 180 or 270 degrees (or -90)")
+    info = media.rotate(p["sha256"], turn)
+    if db.one("SELECT 1 FROM photos WHERE owner_id=? AND sha256=? AND id<>? AND deleted_at IS NULL",
+              (owner_id, info["sha"], photo_id)):
+        raise HTTPException(409, "turned this way it is the same as another photo you already have")
+    analysis = db.loads(p.get("analysis"))
+    if isinstance(analysis, dict):
+        for it in analysis.get("items") or []:
+            if isinstance(it.get("bbox"), list) and len(it["bbox"]) == 4:
+                it["bbox"] = [round(v, 4) for v in media.rotate_box(it["bbox"], turn)]
+    links = db.q("SELECT * FROM links WHERE photo_id=?", (photo_id,))
+    changes = []
+    for l in links:
+        f = {}
+        box = db.loads(l.get("bbox"))
+        if box:
+            f["bbox"] = [round(v, 4) for v in media.rotate_box(box, turn)]
+        for k in ("crop_sha", "cutout_sha"):
+            if l.get(k):
+                f[k] = media.rotate(l[k], turn)["sha"]
+        changes.append((l["id"], f))
+    with db.tx():
+        db.update("photos", photo_id, {"sha256": info["sha"], "width": info["width"], "height": info["height"],
+                                       **({"analysis": analysis} if isinstance(analysis, dict) else {})})
+        for lid, f in changes:
+            db.update("links", lid, f)
+        db.audit(actor, "photo_rotated", owner_id, photo_id, {"degrees": turn})
+    return photo_full(owner_id, photo_id)
+
+
 def update_link(owner_id: str, link_id: str, data: dict, actor: str) -> dict:
     l = db.one("SELECT l.* FROM links l JOIN photos p ON p.id=l.photo_id WHERE l.id=? AND p.owner_id=?",
                (link_id, owner_id))

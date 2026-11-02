@@ -51,11 +51,18 @@ function JobRow({ j, tpl, selected, onSelect, onCancel, onRetry, onTop, canEdit,
             <img src={j.result.sm} className="size-full object-cover" alt="" />
           </Link>
         ) : (
-          (j.items || []).slice(0, 3).map((it) => (
+          [
+            j.base && (
+              <div key="base" className="size-14 overflow-hidden rounded-xl border-2 border-white bg-canvas">
+                <img src={j.base.sm} className="size-full object-cover" alt="" />
+              </div>
+            ),
+            ...(j.items || []).slice(0, j.base ? 2 : 3).map((it) => (
             <div key={it.id} className="size-14 overflow-hidden rounded-xl border-2 border-white bg-canvas">
               {it.cover && <img src={it.cover.sm} className={cx("size-full", it.cover.cutout ? "object-contain p-1" : "object-cover")} alt="" />}
             </div>
-          ))
+            )),
+          ]
         )}
       </div>
       <div className="min-w-0 flex-1">
@@ -67,7 +74,7 @@ function JobRow({ j, tpl, selected, onSelect, onCancel, onRetry, onTop, canEdit,
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
           {j.status === "running" && (
             <Badge tone="accent">
-              <Loader2 className="size-3 animate-spin" /> Making · {dur(j.elapsed_s)}
+              <Loader2 className="size-3 animate-spin" /> {j.finishing ? "Finishing touches" : `Making · ${dur(j.elapsed_s)}`}
             </Badge>
           )}
           {j.status === "queued" && <Badge>#{j.position ?? "–"} in queue</Badge>}
@@ -239,7 +246,8 @@ export default function Studio() {
   const queued = s.counts.queued || 0;
   const running = s.counts.running || 0;
   const can = me.can_edit;
-  const groups = Array.from(new Set(s.templates.map((t) => t.group)));
+  const templates = s.templates.filter((t) => !t.tryon); // try-on has its own page
+  const groups = Array.from(new Set(templates.map((t) => t.group)));
 
   const uploadModel = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -327,6 +335,19 @@ export default function Studio() {
                 </div>
               )}
             </div>
+            <Link
+              to="/tryon"
+              className="mb-4 flex items-center gap-3 rounded-2xl border border-line bg-white p-3.5 text-sm hover:border-[#cfc9bf]"
+            >
+              <span className="grid size-9 place-items-center rounded-xl bg-accent-soft text-accent">
+                <TemplateIcon name="replace" className="size-4" />
+              </span>
+              <span className="flex-1">
+                <b className="font-medium">Try on</b>
+                <span className="block text-xs text-muted">Put any item on you in one of your own photos, keeping everything else as it is.</span>
+              </span>
+              <span className="text-muted">→</span>
+            </Link>
             {p.auto_mode && p.auto_templates.length > 0 && (
               <p className="mb-3 text-xs text-accent">
                 New items get: {p.auto_templates.map((t) => tplById[t]?.name || t).join(", ")}. Use “Fill gaps” to do the same for items you already have.
@@ -336,7 +357,7 @@ export default function Studio() {
               <div key={g} className="mb-5">
                 <div className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-muted">{g}</div>
                 <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-                  {s.templates
+                  {templates
                     .filter((t) => t.group === g)
                     .map((t) => {
                       const auto = p.auto_templates.includes(t.id);

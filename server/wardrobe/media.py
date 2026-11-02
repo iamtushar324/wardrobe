@@ -158,6 +158,40 @@ def crop(sha: str, bbox: list[float], pad: float = 0.04) -> dict:
     return save(img.crop(box))
 
 
+_TURN = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180, 270: Image.Transpose.ROTATE_90}
+
+
+def turns(degrees: int | float | None) -> int:
+    """Normalise a clockwise angle to 0, 90, 180 or 270 (anything else -> 0)."""
+    try:
+        d = int(round(float(degrees or 0))) % 360
+    except (TypeError, ValueError):
+        return 0
+    return d if d in _TURN else 0
+
+
+def rotate(sha: str, degrees: int) -> dict:
+    """Store a copy turned clockwise by 90/180/270 degrees (lossless turn, alpha kept)."""
+    d = turns(degrees)
+    img = open_full(sha)
+    if not d:
+        return {"sha": sha, "width": img.width, "height": img.height}
+    return save(img.transpose(_TURN[d]), keep_alpha=_has_alpha(img))
+
+
+def rotate_box(bbox: list[float], degrees: int) -> list[float]:
+    """Where a normalised [x0,y0,x1,y1] box ends up after turning its image clockwise."""
+    x0, y0, x1, y1 = bbox
+    d = turns(degrees)
+    if d == 90:
+        return [1 - y1, x0, 1 - y0, x1]
+    if d == 180:
+        return [1 - x1, 1 - y1, 1 - x0, 1 - y0]
+    if d == 270:
+        return [y0, 1 - x1, y1, 1 - x0]
+    return [x0, y0, x1, y1]
+
+
 def dhash(sha: str, size: int = 8) -> str:
     """Perceptual difference hash (hex) of an image; similar pictures have a small Hamming distance."""
     img = open_full(sha)

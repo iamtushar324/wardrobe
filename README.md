@@ -17,7 +17,16 @@ manage the wardrobe too.
   commit. Optional hints (store, purchase date, price, original price, brand, gift from, occasions) are only
   applied when you give them.
 - **Items** — every photo of an item in one place (product, on me, AI, tags), automatic cut-outs, purchase
-  details, wear log, favourites, and inline editing.
+  details, wear log, favourites, and inline editing. Garments shot sideways or upside down on a bed are
+  turned upright automatically (the vision model reports the turn); a turn-left / turn-right button fixes
+  any picture by hand.
+- **Try on** — pick one of your photos (upload one, choose from your photos or a model photo) and the items
+  to wear; the AI swaps only those clothes and keeps your face, pose, light and the rest of the picture.
+  One-tap presets (*just swap*, *swap + tidy the room*, *closet-ready*, *cut-out*) and switches for the
+  background (keep, tidy up, studio white, soft blur, new scene), keeping the rest of the outfit, evening
+  out the light, smoothing creases, AI framing for the site (closet card 3:4, square, tight on you — the
+  subject is found with the cut-out model), a transparent cut-out, using the result as the item's main
+  picture, up to three versions and a free-text note ("remove the clothes on the bed behind me").
 - **Studio** — AI pictures from templates:
   `Product · white`, `Product · ghost mannequin`, `Product · flat lay`, `Product · on hanger`,
   `Detail close-up`, `Outfit board`, `Me · lifestyle`, `Me · studio white`, `Me · at the occasion`,
@@ -116,7 +125,7 @@ claude mcp add --transport http wardrobe https://wardrobe.example.com/mcp \
 
 MCP tools include `wardrobe_search`, `wardrobe_get_item`, `wardrobe_create_import`,
 `wardrobe_import_status`, `wardrobe_commit_import`, `wardrobe_add_item`, `wardrobe_update_item`,
-`wardrobe_link_photo`, `wardrobe_mark_worn`, `wardrobe_templates`, `wardrobe_generate` and
+`wardrobe_link_photo`, `wardrobe_mark_worn`, `wardrobe_templates`, `wardrobe_generate`, `wardrobe_try_on` and
 `wardrobe_generation_queue`. The skill in `skills/wardrobe` teaches an agent how to use them and ships a
 `wardrobe-ingest` script for importing a local folder:
 
