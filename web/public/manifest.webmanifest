@@ -1,0 +1,3 @@
+{ "name": "Wardrobe", "short_name": "Wardrobe", "start_url": "/", "display": "standalone",
+  "background_color": "#fbfaf8", "theme_color": "#fbfaf8",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }] }

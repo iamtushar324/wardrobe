@@ -1,0 +1,25 @@
+# Quick start:  WARDROBE_OWNER_EMAIL=you@example.com docker compose up -d   ->  http://localhost:8080
+# With AUTH=password, put the password in ./credentials/owner-password (one line).
+services:
+  web:
+    build: .
+    image: wardrobe:local
+    ports: ["8080:8080"]
+    environment: &env
+      WARDROBE_PUBLIC_URL: ${WARDROBE_PUBLIC_URL:-http://localhost:8080}
+      WARDROBE_AUTH: ${WARDROBE_AUTH:-password}
+      WARDROBE_OWNER_EMAIL: ${WARDROBE_OWNER_EMAIL:-owner@example.com}
+      WARDROBE_CREDENTIALS_DIR: /credentials
+      # optional: photo analysis + OpenRouter pictures
+      WARDROBE_OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    volumes: &vols
+      - ./data:/data
+      - ./credentials:/credentials:ro
+    restart: unless-stopped
+  worker:
+    image: wardrobe:local
+    command: ["python", "-m", "wardrobe.worker"]
+    environment: *env
+    volumes: *vols
+    depends_on: [web]
+    restart: unless-stopped

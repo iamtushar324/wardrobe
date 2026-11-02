@@ -1,0 +1,20 @@
+# dependencies and builds
+node_modules/
+web/dist/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# local data: photos, database, model weights
+data/
+*.db
+*.db-wal
+*.db-shm
+*.onnx
+
+# secrets never belong in this repo
+.env
+.env.*
+credentials/

@@ -1,0 +1,10 @@
+[project]
+name = "wardrobe"
+version = "1.0.0"
+description = "A self-hosted personal wardrobe: catalogue, photo import, AI pictures and an MCP server for agents."
+readme = "../README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

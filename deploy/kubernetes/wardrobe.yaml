@@ -1,0 +1,73 @@
+# Example Kubernetes deployment. Replace wardrobe.example.com and the owner email, create the
+# secret first:
+#   kubectl -n wardrobe create secret generic wardrobe-runtime \
+#     --from-literal=session-key=$(openssl rand -base64 48) \
+#     --from-literal=worker-token=$(openssl rand -hex 32) \
+#     --from-literal=openrouter-api-key=sk-or-...        # optional
+# The ChatGPT worker (worker/wardrobe-codex-worker.py) runs outside the cluster on a machine with the
+# Codex CLI and uses the same worker-token.
+apiVersion: v1
+kind: Namespace
+metadata: {name: wardrobe}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: wardrobe-data, namespace: wardrobe}
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 20Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: wardrobe, namespace: wardrobe}
+spec:
+  replicas: 1                      # SQLite: exactly one pod; web + worker share the volume
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: wardrobe}}
+  template:
+    metadata: {labels: {app: wardrobe}}
+    spec:
+      securityContext: {runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532, runAsNonRoot: true}
+      containers:
+        - name: web
+          image: ghcr.io/your-name/wardrobe:latest
+          env: &env
+            - {name: WARDROBE_PUBLIC_URL, value: 'https://wardrobe.example.com'}
+            - {name: WARDROBE_AUTH, value: 'chatgpt,password'}
+            - {name: WARDROBE_OWNER_EMAIL, value: 'you@example.com'}
+            - {name: WARDROBE_CREDENTIALS_DIR, value: /credentials}
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}}
+          securityContext: &sc {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: &mounts
+            - {name: data, mountPath: /data}
+            - {name: credentials, mountPath: /credentials, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+        - name: worker
+          image: ghcr.io/your-name/wardrobe:latest
+          command: [python, -m, wardrobe.worker]
+          env: *env
+          securityContext: *sc
+          resources: {limits: {memory: 2560Mi}}   # background removal model
+          volumeMounts: *mounts
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: wardrobe-data}}
+        - {name: credentials, secret: {secretName: wardrobe-runtime}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: wardrobe, namespace: wardrobe}
+spec:
+  selector: {app: wardrobe}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: wardrobe, namespace: wardrobe}
+spec:
+  rules:
+    - host: wardrobe.example.com
+      http:
+        paths:
+          - {path: /, pathType: Prefix, backend: {service: {name: wardrobe, port: {name: http}}}}

@@ -1,0 +1,24 @@
+# Example systemd unit for the ChatGPT image worker. Adjust User, paths and WARDROBE_URL.
+[Unit]
+Description=Wardrobe image worker (ChatGPT via the Codex CLI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wardrobe
+Group=wardrobe
+Environment=WARDROBE_URL=https://wardrobe.example.com
+Environment=WARDROBE_WORKER_TOKEN_FILE=/home/wardrobe/.config/wardrobe/worker-token
+Environment=WARDROBE_CODEX_HOMES=/home/wardrobe/.config/wardrobe-codex
+# Refuse ChatGPT accounts on these email domains (e.g. your employer's).
+Environment=WARDROBE_BLOCKED_DOMAINS=
+ExecStart=/usr/bin/python3 /usr/local/lib/wardrobe/wardrobe-codex-worker.py
+Restart=always
+RestartSec=20
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
