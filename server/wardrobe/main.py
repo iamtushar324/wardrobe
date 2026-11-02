@@ -115,7 +115,7 @@ def llms():
 # ---------------- web app ----------------
 @app.get("/{path:path}")
 def spa(path: str):
-    if path.startswith(("api/", "mcp", "media/")):
+    if path.startswith(("api/", "mcp", "media/", ".well-known/")):
         raise HTTPException(404)
     if not WEB_DIR.is_dir():
         return PlainTextResponse("Web app not built. Run `npm run build` in web/ or use the API at /api/docs.", 503)

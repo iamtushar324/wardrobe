@@ -27,3 +27,9 @@ def test_mcp_flow(client):
     r = rpc(client, tok, "tools/call", {"name": "wardrobe_add_photo_urls",
                                         "arguments": {"batch_id": "x", "urls": ["http://127.0.0.1/a.jpg"]}})
     assert r["result"]["isError"] or r["result"]["structuredContent"]["errors"]
+
+
+def test_oauth_discovery_is_not_the_web_app(client):
+    # MCP clients probe these after a 401; an HTML page here breaks their JSON parsing.
+    r = client.get("/.well-known/oauth-protected-resource")
+    assert r.status_code == 404 and r.headers["content-type"].startswith("application/json")

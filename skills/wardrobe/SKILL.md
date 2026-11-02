@@ -14,7 +14,9 @@ brand, size, optional purchase details) and **photos** linked to items with a ro
 Prefer the MCP server: `<server>/mcp` (streamable HTTP, JSON responses) with
 `Authorization: Bearer <token>`. The owner creates the token in **Settings → Agents** (read-only tokens exist).
 If the tools are not loaded, the same operations exist as REST under `<server>/api/v1/...` with the same header;
-`<server>/llms.txt` is the short guide. Never print or store the token anywhere but its config file.
+`<server>/llms.txt` is the short guide. Local scripts read `~/.config/wardrobe/auth.json`
+(`{"url": ..., "token": ...}`) when `WARDROBE_URL`/`WARDROBE_TOKEN` are not set. Never print or store the token
+anywhere but its config file.
 
 ## Find things
 

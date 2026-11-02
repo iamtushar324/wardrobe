@@ -408,7 +408,7 @@ export function BatchReview() {
                 </div>
                 {ph.error && <div className="absolute inset-x-0 bottom-0 bg-danger/90 p-1 text-[10px] text-white">{ph.error}</div>}
                 {me.can_edit && (
-                  <div className="absolute inset-0 hidden flex-col items-center justify-center gap-1.5 bg-ink/50 p-2 group-hover:flex">
+                  <div className="absolute inset-0 hidden flex-col items-center justify-center gap-1.5 bg-ink/50 p-2 group-hover:flex [@media(hover:none)]:top-auto [@media(hover:none)]:flex [@media(hover:none)]:bg-ink/40">
                     <Button size="sm" className="w-full" onClick={() => newItemFromPhoto(ph.id, ph.kind)}>
                       <Plus className="size-3.5" /> New item
                     </Button>
