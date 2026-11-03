@@ -132,12 +132,15 @@ function PasswordSignIn({ onDone }: { onDone: () => void }) {
 
 export default function Login({ cfg }: { cfg: Config }) {
   const qc = useQueryClient();
-  const [mode, setMode] = useState<"choose" | "google" | "chatgpt">("choose");
+  const hasClerk = cfg.auth_modes.includes("clerk") && !!cfg.clerk;
+  // Coming back from Google: reopen Clerk so it can finish the sign-in.
+  const [mode, setMode] = useState<"choose" | "google" | "chatgpt">(() =>
+    hasClerk && location.hash.startsWith("#/sso-callback") ? "google" : "choose",
+  );
   const done = () => {
     qc.invalidateQueries();
     location.reload();
   };
-  const hasClerk = cfg.auth_modes.includes("clerk") && !!cfg.clerk;
   const hasChatGPT = cfg.auth_modes.includes("chatgpt");
   const hasPassword = cfg.auth_modes.includes("password");
   return (
